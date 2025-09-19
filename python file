@@ -1,0 +1,72 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+import re
+
+# 1. Load data
+data = pd.read_csv("estat_tesem070.tsv", sep="\t")
+
+# fix column names (remove spaces)
+data.columns = data.columns.str.strip()
+
+# 2. Split the first messy column into parts
+parts = data.iloc[:,0].str.split(",", expand=True)
+parts.columns = ["freq","sex","age","unit","isced11","geo"]
+
+# keep only the year columns
+years = [c for c in data.columns if c.isdigit()]
+
+# make a clean dataframe
+df = pd.concat([parts, data[years]], axis=1)
+
+# 3. Reshape so each row is one country-year
+long = df.melt(id_vars=["freq","sex","age","unit","isced11","geo"],
+               var_name="year", value_name="value")
+
+# 4. Turn values into numbers
+def to_num(x):
+    if pd.isna(x): return np.nan
+    x = str(x).replace(",", ".").strip()
+    if x in [":",""]: return np.nan
+    m = re.match(r"^([0-9\.]+)", x)
+    return float(m.group(1)) if m else np.nan
+
+long["value"] = long["value"].apply(to_num)
+long["year"] = long["year"].astype(int)
+
+# 5. Focus on age group 20–29, percentages only
+sub = long[(long["age"]=="Y20-29") & (long["unit"].str.contains("PC"))]
+
+# 6. Descriptive stats for 2024
+data2024 = sub[sub["year"]==2024]["value"].dropna()
+print("2024 Summary stats:\n", data2024.describe())
+
+# plot histogram
+plt.hist(data2024, bins=10, edgecolor="black")
+plt.title("Employment rates in 2024 (age 20–29)")
+plt.xlabel("Rate (%)")
+plt.ylabel("Countries")
+plt.show()
+
+# 7. Paired t-test: 2005 vs 2024
+wide = sub[sub["year"].isin([2005,2024])]\
+    .pivot(index="geo", columns="year", values="value")\
+    .dropna()
+
+t, p = stats.ttest_rel(wide[2005], wide[2024])
+print(f"\nPaired t-test (2005 vs 2024): t={t:.2f}, p={p:.4f}")
+print("Average change:", (wide[2024]-wide[2005]).mean())
+
+# 8. Trend for Austria (AT)
+at = sub[sub["geo"]=="AT"].dropna()
+slope, intercept, r, pval, se = stats.linregress(at["year"], at["value"])
+print(f"\nAustria trend slope = {slope:.2f} per year (p={pval:.4f})")
+
+plt.plot(at["year"], at["value"], marker="o")
+plt.title("Austria employment rate (age 20–29)")
+plt.xlabel("Year")
+plt.ylabel("Rate (%)")
+plt.grid(True)
+plt.show()
+
